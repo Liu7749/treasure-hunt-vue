@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Vue 寻宝冒险游戏 - 带背景音乐</title>
+  <script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', sans-serif; }
+    body { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; color: #333; }
+    .container { max-width: 1000px; margin: 0 auto; padding: 20px; }
+    .screen { min-height: 80vh; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+    .btn {
+      padding: 12px 24px; margin: 8px; border: none; border-radius: 50px; font-size: 16px; cursor: pointer;
+      transition: all 0.3s; font-weight: bold;
+    }
+    .btn-primary { background: #4f46e5; color: white; }
+    .btn-primary:hover { background: #4338ca; transform: scale(1.05); }
+    .btn-secondary { background: #64748b; color: white; }
+    .card {
+      background: white; border-radius: 20px; padding: 30px; margin: 20px; width: 90%;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+      text-align: center;
+    }
+    .locations-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; width: 100%;
+    }
+    .location-item {
+      background: #f8fafc; padding: 20px; border-radius: 16px; cursor: pointer;
+      transition: all 0.3s; border: 2px solid transparent;
+    }
+    .location-item:hover { transform: translateY(-5px); border-color: #4f46e5; }
+    .progress-log {
+      background: #f1f5f9; padding: 20px; border-radius: 12px; min-height: 150px;
+      display: flex; flex-direction: column; justify-content: center;
+    }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    th, td { padding: 12px; text-align: center; border-bottom: 1px solid #e2e8f0; }
+    th { background: #f8fafc; }
+    .treasure-found { color: gold; font-size: 1.2em; animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.1); } }
+  </style>
+</head>
+<body>
+  <!-- 音频元素（必须放在 #app 外部，确保能被 JS 获取） -->
+  <audio id="bg-audio" preload="auto" loop>
+    <source src="assets/audio/background.mp3" type="audio/mpeg">
+  </audio>
+  <audio id="library-audio" preload="auto" loop>
+    <source src="assets/audio/library.mp3" type="audio/mpeg">
+  </audio>
+  <audio id="temple-audio" preload="auto" loop>
+    <source src="assets/audio/temple.mp3" type="audio/mpeg">
+  </audio>
+  <audio id="forest-audio" preload="auto" loop>
+    <source src="assets/audio/forest.mp3" type="audio/mpeg">
+  </audio>
+  <audio id="cave-audio" preload="auto" loop>
+    <source src="assets/audio/cave.mp3" type="audio/mpeg">
+  </audio>
+
+  <div id="app">
+    <!-- 登录页 -->
+    <div v-if="!currentUser" class="screen">
+      <div class="card">
+        <h1 style="font-size: 2.5em; margin-bottom: 20px;">🗺️ 寻宝冒险</h1>
+        <p style="margin-bottom: 20px;">请输入你的冒险者名字</p>
+        <input
+          v-model="username"
+          @keyup.enter="login"
+          placeholder="例如：勇敢的刘留"
+          style="padding: 12px; width: 80%; max-width: 300px; border: 1px solid #ddd; border-radius: 8px; margin-bottom: 20px;"
+        />
+        <button @click="login" class="btn btn-primary">开始冒险</button>
+      </div>
+    </div>
+
+    <!-- 主游戏界面 -->
+    <div v-else class="container">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin: 20px 0;">
+        <h1 style="color: white; font-size: 2em;">寻宝冒险</h1>
+        <div>
+          <button @click="showLeaderboard = !showLeaderboard" class="btn btn-primary">
+            {{ showLeaderboard ? '🎮 返回游戏' : '🏆 排行榜' }}
+          </button>
+          <button @click="logout" class="btn btn-secondary">退出 ({{ currentUser.username }})</button>
+        </div>
+      </div>
+
+      <!-- 排行榜 -->
+      <div v-if="showLeaderboard" class="card">
+        <h2>🏆 冒险者排行榜</h2>
+        <table v-if="rankedUsers.length > 0">
+          <thead>
+            <tr>
+              <th>排名</th>
+              <th>冒险者</th>
+              <th>宝藏数</th>
+              <th>游戏次数</th>
+              <th>最佳时间(s)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(user, index) in rankedUsers" :key="user.username">
+              <td>#{{ index + 1 }}</td>
+              <td>{{ user.username }}</td>
+              <td>{{ user.treasures }}</td>
+              <td>{{ user.games }}</td>
+              <td>{{ user.bestTime ? user.bestTime.toFixed(1) : '—' }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <p v-else>暂无数据，快来成为第一个上榜者！</p>
+      </div>
+
+      <!-- 游戏主界面 -->
+      <div v-else>
+        <!-- 全景地图 -->
+        <div v-if="currentView === 'map'" class="card">
+          <h2>选择你的冒险地点</h2>
+          <div class="locations-grid">
+            <div v-for="(loc, key) in locations" :key="key" @click="selectLocation(key)" class="location-item">
+              <div style="font-size: 2em; margin-bottom: 10px;">{{ loc.icon }}</div>
+              <div>{{ loc.name }}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 冒险过程 -->
+        <div v-else-if="currentView === 'adventure'" class="card">
+          <button @click="goBackToMap" class="btn btn-secondary">⬅️ 返回地图</button>
+          <h2 style="margin: 20px 0;">{{ currentLocation?.name }}</h2>
+          <div class="progress-log">
+            <div v-for="(msg, i) in progress" :key="i" :class="{ 'treasure-found': msg.includes('恭喜') }">
+              {{ msg }}
+            </div>
+            <div v-if="progress.length === 0">点击“开始冒险”按钮启动寻宝！</div>
+          </div>
+          <button
+            @click="startAdventure"
+            :disabled="isPlaying"
+            :class="isPlaying ? 'btn-secondary' : 'btn-primary'"
+            class="btn"
+            style="margin-top: 20px;"
+          >
+            {{ isPlaying ? '🔍 冒险中...' : '🚀 开始寻宝' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+  <script>
+    const { createApp, ref, computed, onMounted } = Vue;
+
+    // ====== 模拟异步寻宝 API ======
+    const TreasureAPI = {
+      async getInitialClue(location) {
+        await new Promise(r => setTimeout(r, 1000));
+        const clues = {
+          library: "在古老的图书馆里找到了第一个线索：一本神秘的古籍中夹着一张泛黄的羊皮纸...",
+          temple: "在神秘神庙的祭坛上发现了一个古老的卷轴，上面写着神秘的符文...",
+          forest: "在幽暗森林的古老橡树下，发现了一个刻有神秘符号的石碑...",
+          cave: "在神秘洞穴的深处，岩壁上闪烁着奇异的光芒，似乎隐藏着什么..."
+        };
+        return clues[location];
+      },
+      async decodeScript(clue) {
+        await new Promise(r => setTimeout(r, 1500));
+        return "解码成功！线索指向了一个隐藏的宝箱位置...";
+      },
+      async searchLocation(location) {
+        await new Promise(r => setTimeout(r, 2000));
+        if (Math.random() < 0.3) throw new Error("糟糕！遇到了守护者！");
+        const finds = {
+          library: "在图书馆的密室中找到了一个古老的木箱...",
+          temple: "在神庙的祭坛下方发现了一个石制宝箱...",
+          forest: "在森林深处的树洞里找到了一个精致的铁盒...",
+          cave: "在洞穴的暗室中发现了一个闪耀的水晶箱..."
+        };
+        return finds[location];
+      },
+      async openTreasureBox() {
+        await new Promise(r => setTimeout(r, 1000));
+        return "🎉 恭喜！你找到了传说中的宝藏！";
+      }
+    };
+
+    // ====== 主应用 ======
+    const App = {
+      setup() {
+        // 音频控制
+        const audioElements = {
+          background: document.getElementById('bg-audio'),
+          library: document.getElementById('library-audio'),
+          temple: document.getElementById('temple-audio'),
+          forest: document.getElementById('forest-audio'),
+          cave: document.getElementById('cave-audio')
+        };
+
+        // 设置音量
+        Object.values(audioElements).forEach(audio => {
+          if (audio) audio.volume = 0.3;
+        });
+
+        const playMusic = (type) => {
+          // 暂停所有音频
+          Object.values(audioElements).forEach(audio => {
+            if (audio && !audio.paused) {
+              audio.pause();
+              audio.currentTime = 0;
+            }
+          });
+          // 播放指定音频
+          const audio = audioElements[type];
+          if (audio) {
+            audio.currentTime = 0;
+            audio.play().catch(e => console.log("音频播放需用户交互"));
+          }
+        };
+
+        // 用户状态
+        const username = ref('');
+        const currentUser = ref(null);
+        const users = ref([]);
+
+        // 游戏状态
+        const currentView = ref('map');
+        const showLeaderboard = ref(false);
+        const selectedLocationKey = ref(null);
+        const progress = ref([]);
+        const isPlaying = ref(false);
+
+        const locations = {
+          library: { name: '古老图书馆', icon: '🏛️' },
+          temple: { name: '神秘神庙', icon: '⛩️' },
+          forest: { name: '幽暗森林', icon: '🌳' },
+          cave: { name: '神秘洞穴', icon: '🕳️' }
+        };
+
+        const currentLocation = computed(() => 
+          selectedLocationKey.value ? locations[selectedLocationKey.value] : null
+        );
+
+        const rankedUsers = computed(() => {
+          return [...users.value]
+            .sort((a, b) => 
+              b.treasures - a.treasures || 
+              (a.bestTime || Infinity) - (b.bestTime || Infinity)
+            )
+            .slice(0, 10);
+        });
+
+        // 存储管理
+        const loadStorage = () => {
+          const savedUsers = localStorage.getItem('treasure_users');
+          const savedCurrent = localStorage.getItem('current_user');
+          if (savedUsers) users.value = JSON.parse(savedUsers);
+          if (savedCurrent) currentUser.value = JSON.parse(savedCurrent);
+        };
+
+        const saveStorage = () => {
+          localStorage.setItem('treasure_users', JSON.stringify(users.value));
+          localStorage.setItem('current_user', JSON.stringify(currentUser.value));
+        };
+
+        // 用户操作
+        const login = () => {
+          if (!username.value.trim()) return;
+          let user = users.value.find(u => u.username === username.value);
+          if (!user) {
+            user = { username: username.value, games: 0, treasures: 0, bestTime: null };
+            users.value.push(user);
+          }
+          currentUser.value = user;
+          saveStorage();
+          playMusic('background'); // 登录后播放背景音乐
+          username.value = '';
+        };
+
+        const logout = () => {
+          currentUser.value = null;
+          // 停止所有音乐
+          Object.values(audioElements).forEach(audio => {
+            if (audio && !audio.paused) audio.pause();
+          });
+          saveStorage();
+        };
+
+        const updateStats = (treasureFound, timeSec) => {
+          const user = users.value.find(u => u.username === currentUser.value.username);
+          user.games += 1;
+          if (treasureFound) user.treasures += 1;
+          if (treasureFound) {
+            user.bestTime = user.bestTime ? Math.min(user.bestTime, timeSec) : timeSec;
+          }
+          currentUser.value = { ...user };
+          saveStorage();
+        };
+
+        // 游戏逻辑
+        const selectLocation = (key) => {
+          selectedLocationKey.value = key;
+          currentView.value = 'adventure';
+          progress.value = [];
+          playMusic(key); // 播放对应场景音乐
+        };
+
+        const goBackToMap = () => {
+          currentView.value = 'map';
+          playMusic('background'); // 返回时播放背景音乐
+        };
+
+        const startAdventure = async () => {
+          if (isPlaying.value || !selectedLocationKey.value) return;
+          isPlaying.value = true;
+          progress.value = [];
+          const startTime = Date.now();
+
+          try {
+            const clue = await TreasureAPI.getInitialClue(selectedLocationKey.value);
+            progress.value.push(clue);
+
+            const decoded = await TreasureAPI.decodeScript(clue);
+            progress.value.push(decoded);
+
+            const found = await TreasureAPI.searchLocation(selectedLocationKey.value);
+            progress.value.push(found);
+
+            const treasure = await TreasureAPI.openTreasureBox();
+            progress.value.push(treasure);
+
+            const timeSec = (Date.now() - startTime) / 1000;
+            updateStats(true, timeSec);
+          } catch (err) {
+            progress.value.push(`❌ 任务失败: ${err.message}`);
+            const timeSec = (Date.now() - startTime) / 1000;
+            updateStats(false, timeSec);
+          } finally {
+            isPlaying.value = false;
+          }
+        };
+
+        onMounted(() => {
+          loadStorage();
+          // 如果已登录，播放背景音乐
+          if (currentUser.value) {
+            playMusic('background');
+          }
+        });
+
+        return {
+          username,
+          currentUser,
+          users,
+          login,
+          logout,
+          rankedUsers,
+          currentView,
+          showLeaderboard,
+          selectedLocationKey,
+          progress,
+          isPlaying,
+          locations,
+          currentLocation,
+          selectLocation,
+          goBackToMap,
+          startAdventure
+        };
+      }
+    };
+
+    createApp(App).mount('#app');
+  </script>
+</body>
+</html>
